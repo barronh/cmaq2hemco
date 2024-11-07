@@ -1,7 +1,5 @@
 import pandas as pd
 import numpy as np
-from cmaq2hemco.mp2022 import process_dates
-
 
 
 debug = True
@@ -65,7 +63,8 @@ if debug:
 import os
 from cmaq2hemco.utils import pt2gd, to_ioapi
 from cmaq2hemco.mp2022 import open_gdemis, open_ptemis
-# l1z = ez[:2].mean()
+
+
 nr = 299
 nc = 459
 for date in dates:
@@ -79,7 +78,7 @@ for date in dates:
         os.makedirs(os.path.dirname(outpath), exist_ok=True)
         try:
             gf = open_gdemis(date, gkey)
-            to_ioapi(gf, outpath)
+            to_ioapi(gf, outpath)  # alternatively, just make a symbolic link
         except Exception as e:
             print(f'**WARNING:: Skipping {date} {gkey}: {e}')
             continue
@@ -94,8 +93,8 @@ for date in dates:
         os.makedirs(os.path.dirname(outpath), exist_ok=True)
         try:
             pf = open_ptemis(date, pkey)
-            rpf = pt2gd(pf, nr, nc, ez=ez)
-            to_ioapi(rpf, outpath)
+            rpf = pt2gd(pf, nr, nc, ez=ez)  # apply plume rise
+            to_ioapi(rpf, outpath)          # save out the gridded file
         except IOError as e:
             print(f'**WARNING:: Skipping {date} {pkey}: {e}')
             continue
