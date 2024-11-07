@@ -218,7 +218,9 @@ def merge(fs, bf=None):
     return bf
 
 
-def pt2gd(pf, nr, nc, ez=None, vgtyp=-9999, vgtop=5000., vglvls=None, byvar=True):
+def pt2gd(
+    pf, nr, nc, ez=None, vgtyp=-9999, vgtop=5000., vglvls=None, byvar=True
+):
     import numpy as np
     import xarray as xr
     import pandas as pd
@@ -259,7 +261,7 @@ def pt2gd(pf, nr, nc, ez=None, vgtyp=-9999, vgtop=5000., vglvls=None, byvar=True
     datakeys = [k for k in pf if k not in ('TFLAG',)]
     tmp = np.zeros((nt, nz, nr, nc), dtype='f')
     imod = max(1, ns // 1000)
-    di = 0
+
     if byvar:
         pf['ti'] = ('time',), pf.time.dt.hour.data
         pf['ki'] = ('stack',), kis
@@ -289,7 +291,7 @@ def pt2gd(pf, nr, nc, ez=None, vgtyp=-9999, vgtop=5000., vglvls=None, byvar=True
                 ci = int(cis[si])
                 tmp[:, ki, ri, ci] += vals[:, si]
             print(f'\r{dk:16s}: {1:7.1%}', flush=True)
-            
+
         outf[dk] = ('TSTEP', 'LAY', 'ROW', 'COL'), tmp, pf[dk].attrs
         outf[dk].encoding.update(pf[dk].encoding)
         outf[dk].encoding['chunks'] = (1, 1, nr, nc)
@@ -350,7 +352,8 @@ def to_ioapi(ef, path, **wopts):
                 units='<YYYYJJJ,HHMMSS>', long_name='TFLAG'.ljust(16),
                 var_desc='TFLAG'.ljust(80)
             )
-        ).expand_dims(VAR=np.arange(len(ef.data_vars))).transpose('TSTEP', 'VAR', 'DATE-TIME')
+        ).expand_dims(VAR=np.arange(len(ef.data_vars))).transpose(
+            'TSTEP', 'VAR', 'DATE-TIME'
+        )
         ef['TFLAG'] = tflag
     ef.to_netcdf(path, **wopts)
-        

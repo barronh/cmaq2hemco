@@ -3,4 +3,4 @@ def test_plumerise_briggs():
     dz = plumerise_briggs(
         1, 1, 288.15, pres_a=101325., temp_a=288.15
     )
-    print(dz)
+    assert dz == 0
