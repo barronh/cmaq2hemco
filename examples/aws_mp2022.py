@@ -62,4 +62,41 @@ if debug:
     print(pkeys)
     print(gkeys)
 
-process_dates(dates, gkeys, pkeys, elat, elon, ez, debug=True)
+import os
+from cmaq2hemco.utils import pt2gd, to_ioapi
+from cmaq2hemco.mp2022 import open_gdemis, open_ptemis
+# l1z = ez[:2].mean()
+nr = 299
+nc = 459
+for date in dates:
+    for gkey in gkeys:
+        outpath = (
+            f'epa2022v1/{gkey}/{gkey}_{date:%Y-%m-%d}_epa2022v1_hc_22m.nc'
+        )
+        if os.path.exists(outpath):
+            continue
+        print(date, gkey)
+        os.makedirs(os.path.dirname(outpath), exist_ok=True)
+        try:
+            gf = open_gdemis(date, gkey)
+            to_ioapi(gf, outpath)
+        except Exception as e:
+            print(f'**WARNING:: Skipping {date} {gkey}: {e}')
+            continue
+
+    for pkey in pkeys:
+        outpath = (
+            f'epa2022v1/{pkey}/{pkey}_{date:%Y-%m-%d}_epa2022v1_hc_22m.nc'
+        )
+        if os.path.exists(outpath):
+            continue
+        print(date, pkey)
+        os.makedirs(os.path.dirname(outpath), exist_ok=True)
+        try:
+            pf = open_ptemis(date, pkey)
+            rpf = pt2gd(pf, nr, nc, ez=ez)
+            to_ioapi(rpf, outpath)
+        except IOError as e:
+            print(f'**WARNING:: Skipping {date} {pkey}: {e}')
+            continue
+
