@@ -315,6 +315,10 @@ def pt2hemco(
         if len(pf[dk].dims) == 1:
             print(f'skip {dk}')
             continue
+        dtot = pf[dk].sum()
+        if dtot == 0:
+            print(f'excluded {dk}')
+            continue
         tmp[:] *= 0
         print(dk)
         df = pf[['ti', 'ki', 'ri', 'ci', dk]].to_dataframe()
@@ -430,6 +434,10 @@ def gd2hemco_fast(path, gf, elat, elon):
     X = xr.DataArray(X, dims=('ROW', 'COL'))
     Y = xr.DataArray(Y, dims=('ROW', 'COL'))
     for dk in datakeys:
+        dtot = gf[dk].sum()
+        if dtot == 0:
+            print(f'excluded {dk}')
+            continue
         print(dk)
         tmp = (gf[dk] / qarea).interp(ROW=Y, COL=X)
         attrs = {k: v for k, v in gf[dk].attrs.items()}
@@ -438,6 +446,7 @@ def gd2hemco_fast(path, gf, elat, elon):
             unit = unit.replace('/s', '/m2/s')
         else:
             unit = unit + '/m2'
+        attrs['units'] = unit
         outf.addvar(dk, tmp.data, **attrs)
 
     return outf
@@ -800,12 +809,18 @@ class hemcofile:
         if key not in nc.variables:
             self.defvar(key, dims=dims, **attrs)
         vv = nc.variables[key]
+        vattrs = vv.ncattrs()
         for pk, pv in attrs.items():
-            if pk not in vv.ncattrs():
-                vv.setncattr(pk, pv)
+            vv.setncattr(pk, pv)
         nt = vals.shape[0]
         vv[:nt] = vals
 
+    def close(self):
+        self.nc.close()
+
+    def __del__(self):
+        self.nc.close()
+        del self.nc
 
 def to_ioapi(ef, path, **wopts):
     import xarray as xr
