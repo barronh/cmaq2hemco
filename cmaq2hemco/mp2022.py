@@ -7,21 +7,25 @@ xr.set_options(keep_attrs=True)
 
 def open_gdemis(date, sector):
     import pyproj
-    eroot = 'emis/2022v1/2022hc_cb6_22m/12US1/cmaq_cb6ae7/premerged_area'
-    bucket = 'epa-2022-modeling-platform'
-    try:
+    eroot = 'emis/2022v1/2022hc_cb6_22m/12US1/cmaq_cb6ae7'
+    if sector == 'merged_nobeis_norwc':
         epath = (
-            f'{eroot}/{sector}/emis_mole_{sector}_%Y%m%d'
+            f'{eroot}/{sector}/emis_mole_all_%Y%m%d'
+            + '_12US1_nobeis_norwc_2022hc_cb6_22m.ncf'
+        )
+    else:
+        epath = (
+            f'{eroot}/premerged_area/{sector}/emis_mole_{sector}_%Y%m%d'
             + '_12US1_cmaq_cb6ae7_2022hc_cb6_22m.ncf'
         )
+    bucket = 'epa-2022-modeling-platform'
+    try:
         ef = open_date(date, epath, bucket).isel(
             LAY=0, drop=True
         ).rename(TSTEP='time')
-    except Exception:
-        epath = (
-            f'{eroot}/{sector}/emis_mole_{sector}_%Y%m%d'
-            + '_12US1_cmaq_cb6ae7_2022hc_cb6_22m.ncf.gz'
-        )
+    except Exception as e:
+        print(e)
+        epath += '.gz'
         ef = open_date(date, epath, bucket).isel(
             LAY=0, drop=True
         ).rename(TSTEP='time')

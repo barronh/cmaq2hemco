@@ -1,9 +1,15 @@
 import pandas as pd
 import numpy as np
+import os
+from cmaq2hemco.mp2022 import open_gdemis, open_ptemis
+from cmaq2hemco.utils import pt2hemco, gd2hemco, gd2matrix, gd2hemco_fast
 
 
 debug = True
 dates = pd.date_range('2022-01-01', '2022-12-31', freq='d')
+# Define grid by edges
+elat = np.linspace(15, 65, 501)
+elon = np.linspace(-135, -50, 851)
 # excluding burn and biogenics
 # openburn
 # beis4
@@ -26,7 +32,7 @@ canada_og2D
 canada_afdust_adj
 airports
 afdust_adj""".split()
-
+gkeys = ['merged_nobeis_norwc']
 # ignoring fires to avoid duplication
 # ptagfire
 # ptfire-wild
@@ -39,34 +45,20 @@ cmv_c3_12
 pt_oilgas
 ptnonipm""".split()
 
-elat = np.linspace(15, 65, 51)
-elon = np.linspace(-130, -50, 81)
-# allocating emissions to level based on stack height (STKHT) and Briggs
-# plume rise using approximate level heights from 
-# http://wiki.seas.harvard.edu/geos-chem/index.php/GEOS-Chem_vertical_grids
-# and assuming constant T=288.15 and P=101325
-nz = 11
-ez = np.array([
-    -6,  123.,  254.,  387.,  521.,  657.,  795.,  934., 1075.,
-    1218., 1363., 1510., 1659., 1860., 2118., 2382., 2654., 2932.,
-    3219., 3665., 4132., 4623., 5142., 5692.
-])[:nz]
 if debug:
     dates = dates[:1]
-    pkeys = pkeys[:1]
+    pkeys = pkeys[:0]
     gkeys = gkeys[:1]
     print('**WARNING: in debug mode; only processing')
     print(dates)
     print(pkeys)
     print(gkeys)
 
-import os
-from cmaq2hemco.utils import pt2gd, to_ioapi
-from cmaq2hemco.mp2022 import open_gdemis, open_ptemis
-
-
-nr = 299
-nc = 459
+# if not os.path.exists('epa2022v1/matrix.csv'):
+#     gf = open_gdemis(dates[0], gkeys[0])
+#     mdf = gd2matrix(gf, elat, elon)
+#     mdf.drop('geometry', axis=1).to_csv('epa2022v1/matrix.csv')
+# matrix = pd.read_csv('epa2022v1/matrix.csv', index_col=['ROW', 'COL', 'lati', 'loni'])
 for date in dates:
     for gkey in gkeys:
         outpath = (
@@ -77,12 +69,17 @@ for date in dates:
         print(date, gkey)
         os.makedirs(os.path.dirname(outpath), exist_ok=True)
         try:
+            # open_gdemis could fail if date is not available (eg., only weekday)
             gf = open_gdemis(date, gkey)
-            to_ioapi(gf, outpath)  # alternatively, just make a symbolic link
         except Exception as e:
             print(f'**WARNING:: Skipping {date} {gkey}: {e}')
             continue
-
+        # using bilinear interpolation of fluxes
+        rgf = gd2hemco_fast(outpath, gf, elat, elon)
+        # use matrix interpolation for fractional area overlap (slow)
+        # rgf = gd2hemco(outpath, gf, elat, elon, matrix=matrix)
+        del rgf, gf
+    
     for pkey in pkeys:
         outpath = (
             f'epa2022v1/{pkey}/{pkey}_{date:%Y-%m-%d}_epa2022v1_hc_22m.nc'
@@ -92,10 +89,11 @@ for date in dates:
         print(date, pkey)
         os.makedirs(os.path.dirname(outpath), exist_ok=True)
         try:
+            # open_ptemis could fail if date is not available (eg., only weekday)
             pf = open_ptemis(date, pkey)
-            rpf = pt2gd(pf, nr, nc, ez=ez)  # apply plume rise
-            to_ioapi(rpf, outpath)          # save out the gridded file
         except IOError as e:
             print(f'**WARNING:: Skipping {date} {pkey}: {e}')
             continue
+        rpf = pt2hemco(outpath, pf, elat, elon)  # apply plume rise
+        del rpf, pf
 

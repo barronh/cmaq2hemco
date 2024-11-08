@@ -1,9 +1,67 @@
 __all__ = [
-    'plumerise_briggs', 'open_date', 'grid2grid', 'pt2gd', 'merge', 'to_ioapi'
+    'plumerise_briggs', 'open_date', 'gd2hemco', 'pt2hemco', 'pt2gd', 'merge',
+    'to_ioapi'
 ]
 
+import numpy as np
 import xarray as xr
 xr.set_options(keep_attrs=True)
+
+_defez = np.array([
+    -6.00, 123.0, 254.0, 387.0, 521.0, 657.0, 795.0, 934.0, 1075., 1218.,
+    1363., 1510., 1659., 1860., 2118., 2382., 2654., 2932., 3219., 3665.,
+    4132., 4623., 5142., 5692., 6277., 6905., 7582., 8320., 9409., 10504,
+    11578, 12633, 13674, 14706, 15731, 16753, 17773, 18807, 19855, 20920,
+    22004, 23108, 24240, 25402, 26596, 27824, 29085, 30382, 31716, 33101,
+    34539, 36030, 37574, 39173, 40825, 42529, 44286, 46092, 47946, 49844,
+    51788, 53773, 55794, 57846, 59924, 62021, 64129, 66245, 68392, 70657,
+    73180, 76357, 80581
+], dtype='f')
+_deflevs = np.array([
+    0.99250002413, 0.97749990013, 0.962499776, 0.947499955, 0.93250006,
+    0.91749991, 0.90249991, 0.88749996, 0.87249996, 0.85750006, 0.842500125,
+    0.82750016, 0.8100002, 0.78750002, 0.762499965, 0.737500105, 0.7125001,
+    0.6875001, 0.65625015, 0.6187502, 0.58125015, 0.5437501, 0.5062501,
+    0.4687501, 0.4312501, 0.3937501, 0.3562501, 0.31279158, 0.26647905,
+    0.2265135325, 0.192541016587707, 0.163661504087706, 0.139115, 0.11825,
+    0.10051436, 0.085439015, 0.07255786, 0.06149566, 0.05201591, 0.04390966,
+    0.03699271, 0.03108891, 0.02604911, 0.021761005, 0.01812435, 0.01505025,
+    0.01246015, 0.010284921, 0.008456392, 0.0069183215, 0.005631801,
+    0.004561686, 0.003676501, 0.002948321, 0.0023525905, 0.00186788,
+    0.00147565, 0.001159975, 0.00090728705, 0.0007059566, 0.0005462926,
+    0.0004204236, 0.0003217836, 0.00024493755, 0.000185422, 0.000139599,
+    0.00010452401, 7.7672515e-05, 5.679251e-05, 4.0142505e-05, 2.635e-05,
+    1.5e-05
+], dtype='d')
+
+
+_levattrs = dict(
+    long_name="hybrid level at midpoints ((A/P0)+B)",
+    units="level",
+    axis="Z",
+    positive="up",
+    standard_name="atmosphere_hybrid_sigma_pressure_coordinate",
+    formula_terms="a: hyam b: hybm p0: P0 ps: PS",
+)
+_latattrs = dict(
+    long_name="Latitude",
+    units="degrees_north",
+    axis="Y",
+    bounds="lat_bnds",
+)
+_lonattrs = dict(
+    long_name="Longitude",
+    units="degrees_east",
+    axis="X",
+    bounds="lon_bnds",
+)
+_reftime = '1970-01-01 00:00:00'
+_timeattrs = dict(
+    long_name="Time",
+    units=f"hours since {_reftime}",
+    calendar="gregorian",
+    axis="T",
+)
 
 
 def plumerise_briggs(
@@ -167,34 +225,338 @@ def open_date(
     return f
 
 
-def grid2grid(f, elat, elon, ez=None):
+def pt2hemco(
+    path, pf, elat, elon, ez=None, nk=11, temp_a=288.15, pres_a=101325
+):
+    """
+    Arguments
+    ---------
+    path : str
+        Path to save as HEMCO file
+    pf : xarray.Dataset
+        Point source from se_file
+    elat : array
+        Edge latitudes for regular grid
+    elon : array
+        Edge longitudes for regular grid
+    ez : array
+        Edge altitudes in meeters for vertical structure
+    nk : int
+        Number of vertical levels to use if ek not specified
+    temp_a : float
+        Temperature in K for temperature to use for plume rise.
+    pres_a : float
+        Pressure in Pa for temperature to use for plume rise.
+
+    Arguments
+    ---------
+    outf : hemcofile
+        Object with .nc property
+    """
     import numpy as np
     import pandas as pd
+    assert pf['lat'].min() > elat.min()
+    assert pf['lat'].max() < elat.max()
+    assert pf['lon'].min() > elon.min()
+    assert pf['lon'].max() < elon.max()
+
+    # allocating emissions to level based on stack height (STKHT) and Briggs
+    # plume rise using approximate level heights from
+    # http://wiki.seas.harvard.edu/geos-chem/index.php/GEOS-Chem_vertical_grids
+    # and assuming constant T=288.15 and P=101325
+    if ez is None:
+        ez = _defez[:nk + 1]
+    nt = pf.sizes['time']
+    nr = elat.size - 1
+    nc = elon.size - 1
     clat = (elat[1:] + elat[:-1]) / 2
     clon = (elon[1:] + elon[:-1]) / 2
-    df = f.to_dataframe()
+    ilat = np.arange(nr)
+    ilon = np.arange(nc)
     # replace continues lat/lon with midpoint indexer
-    df['lat'] = pd.cut(df['lat'], bins=elat, labels=clat)
-    df['lon'] = pd.cut(df['lon'], bins=elon, labels=clon)
-    if ez is not None:
-        cz = (ez[1:] + ez[:-1]) / 2
-        dz = plumerise_briggs(df['STKDM'], df['STKVE'], df['STKTK'])
-        z = df['STKHT'] + dz
+    ris = pd.cut(pf['lat'], bins=elat, labels=ilat).astype('i')
+    cis = pd.cut(pf['lon'], bins=elon, labels=ilon).astype('i')
+    if ez is not None and 'STKHT' in pf:
+        # cz = (ez[1:] + ez[:-1]) / 2
+        iz = np.arange(nk)
+        dz = plumerise_briggs(
+            pf['STKDM'], pf['STKVE'], pf['STKTK'], temp_a=temp_a, pres_a=pres_a
+        )
+        z = pf['STKHT'] + dz
         z = np.minimum(np.maximum(z, ez[0]), ez[-1])
-        df['lev'] = pd.cut(z, bins=ez, labels=cz)
-        gbkeys = ['time', 'lev', 'lat', 'lon']
+        kis = pd.cut(z, bins=ez, labels=iz).astype('i')
     else:
-        gbkeys = ['time', 'lat', 'lon']
-    # keep bins with no values and sum all emissions in each t/y/x bin.
-    outdf = df.groupby(gbkeys, observed=False).sum(numeric_only=True)
-    outds = outdf.to_xarray()
-    chunks = [dl for dk, dl in outds.sizes.items()]
-    chunks[0] = 1
-    outds.attrs.update(f.attrs)
-    for k in list(outds.data_vars):
-        outds[k].encoding.update(complevel=1, chunks=chunks, zlib=True)
-        outds[k].attrs.update(f[k].attrs)
-    return outds
+        nk = 1
+        kis = np.zeros(pf.sizes['stack'], dtype='i')
+
+    clev = _deflevs[:nk]
+    tis = (
+        (pf.time - pf.time.min()).dt.total_seconds() / 3600
+    ).round(0).astype('i').data
+    pf['ti'] = ('time',), tis
+    pf['ki'] = ('stack',), kis
+    pf['ri'] = ('stack',), ris
+    pf['ci'] = ('stack',), cis
+    nt = 25
+    tmp = np.zeros((nt, nk, nr, nc), dtype='f')
+    datakeys = [
+        k for k, v in pf.data_vars.items()
+        if (
+            k not in ('TFLAG', 'lon', 'lat', 'ti', 'ki', 'ri', 'ci')
+            and len(v.dims) > 1
+        )
+    ]
+    outf = hemcofile(
+        path, pf.time, clat, clon, lev=clev, varkeys=datakeys, attrs=pf.attrs
+    )
+    area = hemco_area(elat, elon)
+    outf.addvar('AREA', area, units='m2', dims=('lat', 'lon'))
+    for dk in datakeys:
+        if len(pf[dk].dims) == 1:
+            print(f'skip {dk}')
+            continue
+        tmp[:] *= 0
+        print(dk)
+        df = pf[['ti', 'ki', 'ri', 'ci', dk]].to_dataframe()
+        df = df.loc[df[dk] != 0]
+        vals = df.groupby(['ti', 'ki', 'ri', 'ci'], as_index=False).sum()
+        tmp[vals.ti, vals.ki, vals.ri, vals.ci] = vals[dk].values
+        attrs = {k: v for k, v in pf[dk].attrs.items()}
+        unit = attrs['units'].strip()
+        if '/s' in unit:
+            unit = unit.replace('/s', '/m2/s')
+        else:
+            unit = unit + '/m2'
+        attrs['units'] = unit
+        tmp /= area
+        outf.addvar(dk, tmp, **attrs)
+
+    return outf
+
+
+def gd2matrix(gf, elat, elon):
+    from shapely.geometry import box
+    import geopandas as gpd
+    import warnings
+    clat = (elat[:-1] + elat[1:]) / 2
+    clon = (elon[:-1] + elon[1:]) / 2
+    hdx = np.diff(elon).mean() / 2
+    hdy = np.diff(elat).mean() / 2
+    qgeodf = gf.csp.geodf
+    qgeodf['original_area'] = qgeodf.geometry.area
+    if hdx == hdy:
+        latj = np.arange(clat.size)
+        loni = np.arange(clon.size)
+        LONI, LATJ = np.meshgrid(loni, latj)
+        LON, LAT = np.meshgrid(clon, clat)
+        LAT = LAT.ravel()
+        LON = LON.ravel()
+        LATJ = LATJ.ravel()
+        LONI = LONI.ravel()
+        hgeodf = gpd.GeoDataFrame(
+            dict(lat=LAT, lon=LON, lati=LATJ, loni=LONI),
+            geometry=gpd.points_from_xy(LON, LAT), crs=4326
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            hgeodf['geometry'] = hgeodf['geometry'].buffer(
+                hdx, cap_style='square'
+            )
+    else:
+        geoms = []
+        lats = []
+        latis = []
+        lons = []
+        lonis = []
+        for lati, lat in enumerate(clat):
+            for loni, lon in enumerate(clon):
+                lats.append(lat)
+                latis.append(lati)
+                lons.append(lons)
+                lonis.append(loni)
+                geoms.append(box(lon - hdx, lat - hdy, lon + hdx, lat + hdy))
+        hgeodf = gpd.GeoDataFrame(
+            dict(lat=lats, lons=lons, lati=latis, loni=lonis),
+            geometry=geoms, crs=4326
+        )
+    ol = gpd.overlay(qgeodf.reset_index(), hgeodf.to_crs(qgeodf.crs))
+    ol['intx_area'] = ol.geometry.area
+    ol['fraction'] = ol['intx_area'] / ol['original_area']
+    ol['ri'] = ol['ROW'].astype('i')
+    ol['ci'] = ol['COL'].astype('i')
+    return ol.set_index(['ROW', 'COL', 'lati', 'loni'])
+
+
+def gd2hemco_fast(path, gf, elat, elon):
+    """
+    Bilinear interpolation of fluxes (w/ MSFX2 factor)
+
+    Arguments
+    ---------
+    path : str
+        Path to save as HEMCO file
+    pf : xarray.Dataset
+        Point source from se_file
+    elat : array
+        Edge latitudes for regular grid
+    elon : array
+        Edge longitudes for regular grid
+
+    Arguments
+    ---------
+    outf : hemcofile
+        Object with .nc property
+    """
+    import pyproj
+    proj = pyproj.Proj(gf.crs)
+    qarea = (
+        gf.XCELL * gf.YCELL
+        / proj.get_factors(gf['lon'], gf['lat']).areal_scale
+    )
+    clat = (elat[1:] + elat[:-1]) / 2
+    clon = (elon[1:] + elon[:-1]) / 2
+    clev = _deflevs[:1]
+    datakeys = [
+        k for k in gf
+        if k not in ('TFLAG', 'ti', 'ki', 'ri', 'ci', 'lon', 'lat')
+    ]
+    outf = hemcofile(
+        path, gf.time, clat, clon, lev=clev, varkeys=datakeys, attrs=gf.attrs
+    )
+    area = hemco_area(elat, elon)
+    outf.addvar('AREA', area, units='m2', dims=('lat', 'lon'))
+    LON, LAT = np.meshgrid(clon, clat)
+    X, Y = proj(LON, LAT)
+    X = xr.DataArray(X, dims=('ROW', 'COL'))
+    Y = xr.DataArray(Y, dims=('ROW', 'COL'))
+    for dk in datakeys:
+        print(dk)
+        tmp = (gf[dk] / qarea).interp(ROW=Y, COL=X)
+        attrs = {k: v for k, v in gf[dk].attrs.items()}
+        unit = attrs['units'].strip()
+        if '/s' in unit:
+            unit = unit.replace('/s', '/m2/s')
+        else:
+            unit = unit + '/m2'
+        outf.addvar(dk, tmp.data, **attrs)
+
+    return outf
+
+
+def gd2hemco(path, gf, elat, elon, matrix=None):
+    """
+    Uses a fractional aera overlap interoplation.
+
+    Arguments
+    ---------
+    path : str
+        Path to save as HEMCO file
+    pf : xarray.Dataset
+        Point source from se_file
+    elat : array
+        Edge latitudes for regular grid
+    elon : array
+        Edge longitudes for regular grid
+    matrix : pandas.DataFrame
+        fraction from row/col centroids to lat/lon centroids
+
+    Arguments
+    ---------
+    outf : hemcofile
+        Object with .nc property
+    """
+    import numpy as np
+    import pandas as pd
+    if not gf['lat'].min() > elat.min():
+        raise AssertionError('input grid lat lower than output grid')
+    if not gf['lat'].max() < elat.max():
+        raise AssertionError('input grid lat greater than output grid')
+    if not gf['lon'].min() > elon.min():
+        raise AssertionError('input grid lon lower than output grid')
+    if not gf['lon'].max() < elon.max():
+        print(gf['lon'].max())
+        raise AssertionError('input grid lon greater than output grid')
+    if matrix is None:
+        matrix = gd2matrix(gf, elat, elon)
+
+    nt = gf.sizes['time']
+    nr = elat.size - 1
+    nc = elon.size - 1
+    nk = 1
+    clat = (elat[1:] + elat[:-1]) / 2
+    clon = (elon[1:] + elon[:-1]) / 2
+    clev = _deflevs[:nk]
+    tis = (
+        (gf.time - gf.time.min()).dt.total_seconds() / 3600
+    ).round(0).astype('i').data
+    gf['ti'] = ('time',), tis
+    kis = np.zeros((nk,), dtype='i')
+    gf['ki'] = ('LAY',), kis
+    nt = 25
+    tmp = np.zeros((nt, nk, nr, nc), dtype='f')
+    datakeys = [
+        k for k in gf
+        if k not in ('TFLAG', 'ti', 'ki', 'ri', 'ci', 'lon', 'lat')
+    ]
+    outf = hemcofile(
+        path, gf.time, clat, clon, lev=clev, varkeys=datakeys, attrs=gf.attrs
+    )
+    area = hemco_area(elat, elon)
+    outf.addvar('AREA', area, units='m2', dims=('lat', 'lon'))
+    if matrix is not None:
+        matrix = matrix[['fraction']].reset_index()
+    else:
+        matrix = gf[['ROW', 'COL']].to_dataframe().reset_index()
+        ilat = np.arange(nr + 1)
+        ilon = np.arange(nc + 1)
+        # replace continues lat/lon with midpoint indexer
+        ris = np.interp(
+            gf['lat'], elat, ilat, left=-999, right=-888
+        ).astype('i')
+        cis = np.interp(
+            gf['lon'], elon, ilon, left=-999, right=-888
+        ).astype('i')
+        matrix['lati'] = ris.data.ravel()
+        matrix['loni'] = cis.data.ravel()
+        matrix['fraction'] = 1
+
+    merged = None
+    for dk in datakeys:
+        if len(gf[dk].dims) == 1:
+            print(f'skip {dk}')
+            continue
+        tmp[:] *= 0
+        print(dk)
+        df = gf[['ti', 'ki', dk]].to_dataframe()
+        gvals = df.groupby(['ti', 'ki', 'ROW', 'COL'], as_index=True).sum()
+        if merged is None:
+            merged = pd.merge(
+                gvals.reset_index(), matrix,
+                left_on=['ROW', 'COL'], right_on=['ROW', 'COL'], how='left'
+            ).rename(columns={dk: 'val'}).set_index(
+                ['ti', 'ki', 'ROW', 'COL', 'lati', 'loni']
+            )
+            midx = merged.index.droplevel(['lati', 'loni'])
+            frac = merged['fraction'].values
+        merged['val'] = frac * gvals.loc[midx, dk].values
+        idxs = ['ti', 'ki', 'lati', 'loni']
+        gval = merged['val'].groupby(idxs).sum()
+        ti = gval.index.get_level_values('ti')
+        ki = gval.index.get_level_values('ki')
+        lati = gval.index.get_level_values('lati')
+        loni = gval.index.get_level_values('loni')
+        tmp[ti, ki, lati, loni] += gval
+        attrs = {k: v for k, v in gf[dk].attrs.items()}
+        unit = attrs['units'].strip()
+        if '/s' in unit:
+            unit = unit.replace('/s', '/m2/s')
+        else:
+            unit = unit + '/m2'
+        attrs['units'] = unit
+        tmp /= area
+        outf.addvar(dk, tmp, **attrs)
+
+    return outf
 
 
 def merge(fs, bf=None):
@@ -221,6 +583,9 @@ def merge(fs, bf=None):
 def pt2gd(
     pf, nr, nc, ez=None, vgtyp=-9999, vgtop=5000., vglvls=None, byvar=True
 ):
+    """
+    Convert point file (from se_file) to a CMAQ gridded emission file.
+    """
     import numpy as np
     import xarray as xr
     import pandas as pd
@@ -326,6 +691,120 @@ def se_file(sf, ef):
     del ef['LATITUDE']
     del ef['LONGITUDE']
     return ef
+
+
+def hemco_area(elat, elon, R=6371007.2):
+    """
+    Arguments
+    ---------
+    elat : array
+        Edges that define a regular grid in degrees from 0N
+    elon : array
+        Edges that define a regular grid in degrees from 0E
+    R : float
+        Radius of the earth https://github.com/geoschem/geos-chem/issues/2453
+
+    Returns
+    -------
+    A : array
+        Area in square meters with dimensions (nlat, nlon)
+    """
+    import numpy as np
+    dx = np.diff(elon).mean()
+    # 1-d area
+    a = dx * np.pi / 180 * R**2 * np.diff(np.sin(np.radians(elat)))
+    # 2-d area
+    A = a.astype('f')[:, None].repeat(elon.size - 1, 1)
+    return A
+
+
+class hemcofile:
+    def __init__(
+        self, path, time, lat, lon, lev=None, varkeys=None, attrs=None
+    ):
+        import pandas as pd
+        import netCDF4
+        if varkeys is None:
+            varkeys = []
+        nc = self.nc = netCDF4.Dataset(
+            path, mode='ws', format='NETCDF4_CLASSIC'
+        )
+        if attrs is not None:
+            for pk, pv in attrs.items():
+                nc.setncattr(pk, pv)
+        nc.createDimension('time', None)
+        if lev is not None:
+            nc.createDimension('lev', lev.size)
+        nc.createDimension('lat', lat.size)
+        nc.createDimension('lon', lon.size)
+        tv = nc.createVariable('time', 'd', ('time',))
+        for k, v in _timeattrs.items():
+            tv.setncattr(k, v)
+        timec = (
+            (
+                pd.to_datetime(time)
+                - pd.to_datetime(_reftime)
+            ).total_seconds() / 3600.
+        ).astype('d')
+        tv[:timec.size] = timec
+        if lev is not None:
+            levv = nc.createVariable('lev', 'd', ('lev',))
+            for k, v in _levattrs.items():
+                levv.setncattr(k, v)
+            levv[:] = lev
+        latv = nc.createVariable('lat', 'd', ('lat',))
+        for k, v in _latattrs.items():
+            latv.setncattr(k, v)
+        latv[:] = lat
+        lonv = nc.createVariable('lon', 'd', ('lon',))
+        for k, v in _lonattrs.items():
+            lonv.setncattr(k, v)
+        lonv[:] = lon
+        for vk in varkeys:
+            self.defvar(vk)
+
+    def defvar(self, vk, dims=None, **attrs):
+        """
+        Define a variable using HEMCO expectations
+        """
+        ncf = self.nc
+        nr = len(ncf.dimensions['lat'])
+        nc = len(ncf.dimensions['lon'])
+        chunkdefsizes = dict(time=1, lev=1, lat=nr, lon=nc)
+        if dims is None:
+            if 'lev' not in ncf.dimensions:
+                dims = ('time', 'lat', 'lon')
+            else:
+                dims = ('time', 'lev', 'lat', 'lon')
+        chunks = [chunkdefsizes[dk] for dk in dims]
+        vv = ncf.createVariable(
+            vk, 'f', dims, chunksizes=chunks, zlib=True, complevel=1
+        )
+        vv.setncattr('standard_name', vk)
+        vv.setncattr('units', 'unknown')
+        for pk, pv in attrs.items():
+            vv.setncattr(pk, pv)
+
+    def setattrs(self, **attrs):
+        """
+        Add attributes to file
+        """
+        for k, v in attrs.items():
+            self.nc.setncattr(k, v)
+
+    def addvar(self, key, vals, dims=None, **attrs):
+        """
+        Add a variable (defining if necessary using HEMCO expectations)
+        """
+        nc = self.nc
+        if key not in nc.variables:
+            self.defvar(key, dims=dims, **attrs)
+        vv = nc.variables[key]
+        for pk, pv in attrs.items():
+            if pk not in vv.ncattrs():
+                vv.setncattr(pk, pv)
+        nt = vals.shape[0]
+        vv[:nt] = vals
 
 
 def to_ioapi(ef, path, **wopts):
