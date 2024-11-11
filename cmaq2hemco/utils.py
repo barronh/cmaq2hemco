@@ -64,6 +64,52 @@ _timeattrs = dict(
 )
 
 
+def getmw(key, gc='cb6r5_ae7_aq', nr='cb6r5hap_ae7_aq'):
+    import requests
+    import os
+    import io
+    import pandas as pd
+    import re
+
+    mwpath = f'cmaq_{gc}_molwt.csv'
+    fillin = {
+        'CH4': 16.0,         # from ECH4
+        'ETHYLBENZ': 106.2,  # from XYLMN
+        'BENZ': 78.1,        # from BENZENE
+        'NH3': 17.0,         # from NR_{mech}.nml
+    }
+    if not os.path.exists(mwpath):
+        mwdfs = []
+        for prfx, mech in [('GC', gc), ('NR', nr)]:
+            url = (
+                'https://raw.githubusercontent.com/USEPA/CMAQ/refs/heads/main/'
+                f'CCTM/src/MECHS/{mech}/{prfx}_{mech}.nml'
+            )
+            r = requests.get(url)
+            txtlines = r.text.split('\n')
+            datlines = [
+                _l for _l in txtlines
+                if _l.startswith("'") or _l.startswith('!')
+            ]
+            datlines[0] = datlines[0].replace('!', '') + ','
+            dat = '\n'.join(datlines).replace("'", "")
+            dat = re.sub('[ ]+,', ',', dat)
+            rmwdf = pd.read_csv(io.StringIO(dat), index_col=False)
+            rmwdf.columns = [k for k in rmwdf.columns]
+            mwdfs.append(rmwdf.set_index('SPECIES'))
+        mwdf = pd.concat(mwdfs)
+        for newk, mw in fillin.items():
+            if newk not in mwdf.index:
+                mwdf.loc[newk, 'MOLWT'] = mw
+        mwdf[['MOLWT']].to_csv(mwpath, index=True)
+    mwdf = pd.read_csv(mwpath, index_col=0)
+    try:
+        mw = mwdf.loc[key, 'MOLWT'] / 1e3
+    except KeyError:
+        raise KeyError(f'{key} not found in {mwpath}')
+    return mw
+
+
 def plumerise_briggs(
     stkdm, stkvel, stktk, pres_a=101325., temp_a=288.15, u=2.5, x=6000.,
     theta_lapse=None, F=None
@@ -327,12 +373,8 @@ def pt2hemco(
         tmp[vals.ti, vals.ki, vals.ri, vals.ci] = vals[dk].values
         attrs = {k: v for k, v in pf[dk].attrs.items()}
         unit = attrs['units'].strip()
-        if '/s' in unit:
-            unit = unit.replace('/s', '/m2/s')
-        else:
-            unit = unit + '/m2'
+        tmp, unit = unitconvert(dk, tmp, unit, area=area)
         attrs['units'] = unit
-        tmp /= area
         outf.addvar(dk, tmp, **attrs)
 
     return outf
@@ -441,11 +483,8 @@ def gd2hemco_fast(path, gf, elat, elon):
         print(dk)
         tmp = (gf[dk] / qarea).interp(ROW=Y, COL=X)
         attrs = {k: v for k, v in gf[dk].attrs.items()}
-        unit = attrs['units'].strip()
-        if '/s' in unit:
-            unit = unit.replace('/s', '/m2/s')
-        else:
-            unit = unit + '/m2'
+        unit = attrs['units'].strip() + '/m**2'
+        tmp, unit = unitconvert(dk, tmp, unit=unit)
         attrs['units'] = unit
         outf.addvar(dk, tmp.data, **attrs)
 
@@ -556,16 +595,44 @@ def gd2hemco(path, gf, elat, elon, matrix=None):
         loni = gval.index.get_level_values('loni')
         tmp[ti, ki, lati, loni] += gval
         attrs = {k: v for k, v in gf[dk].attrs.items()}
-        unit = attrs['units'].strip()
-        if '/s' in unit:
-            unit = unit.replace('/s', '/m2/s')
-        else:
-            unit = unit + '/m2'
+        tmp, unit = unitconvert(dk, tmp, attrs['units'], area=area)
         attrs['units'] = unit
-        tmp /= area
         outf.addvar(dk, tmp, **attrs)
 
     return outf
+
+
+def unitconvert(key, val, unit, area=None, inplace=True):
+    outunit = []
+    factor = 1
+    assert '/s' in unit
+    inunit = unit.replace('/s', '')
+    if unit in ('g/s',):
+        factor = factor / 1000.
+        outunit.append('kg')
+    elif unit in ('moles/s',):
+        try:
+            mw = getmw(key)
+            factor *= mw
+            outunit.append('kg')
+        except KeyError as e:
+            print(f'**WARNING: {key} in {unit} not converted to kg: {e}')
+            outunit.append(inunit)
+    else:
+        print(f'**WARNING: {key} [{unit}] not converted to kg: {unit} unknown')
+        outunit.append(inunit)
+    if 'm**2' not in unit and area is not None:
+        factor = 1 / area
+        outunit.append('/m**2')
+    outunit.append('/s')
+    outunit = ''.join(outunit)
+    if inplace:
+        outval = val
+        outval *= factor
+    else:
+        outval = val * factor
+    outunit = outunit.replace('/s/m', '/m2/s')
+    return outval, outunit
 
 
 def merge(fs, bf=None):
@@ -809,7 +876,6 @@ class hemcofile:
         if key not in nc.variables:
             self.defvar(key, dims=dims, **attrs)
         vv = nc.variables[key]
-        vattrs = vv.ncattrs()
         for pk, pv in attrs.items():
             vv.setncattr(pk, pv)
         nt = vals.shape[0]
@@ -821,6 +887,7 @@ class hemcofile:
     def __del__(self):
         self.nc.close()
         del self.nc
+
 
 def to_ioapi(ef, path, **wopts):
     import xarray as xr
