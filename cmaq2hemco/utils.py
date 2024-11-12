@@ -921,3 +921,57 @@ def to_ioapi(ef, path, **wopts):
         )
         ef['TFLAG'] = tflag
     ef.to_netcdf(path, **wopts)
+
+
+def symlinks(tmpl, dates, datetype=None, verbose=0):
+    """
+    Arguments
+    ---------
+    tmpl : str
+        strftime template for paths
+    dates : pd.Series or str
+        If Series, must have date index (destination date) and date values
+        (source)
+        If str, path to csv file with dates file as describe in Notes.
+    datetype: str or None
+        If dates is an instance of str, choose one of: aveday_Y, aveday_N,
+        mwdss_Y, mwdss_N, week_Y, week_N, all. Where Y/N denotes if "holidays"
+        have special treatment.
+    verbose: int
+        Level of verbosity
+
+    Returns
+    -------
+    links : list
+        List of links that were created
+
+    Notes
+    -----
+    Date,aveday_N,aveday_Y,mwdss_N,mwdss_Y,week_N,week_Y,all
+    20160401,20160405,20160405,20160405,20160405,20160408,20160408,20160401
+    ...
+
+    """
+    import pandas as pd
+    import os
+    if not isinstance(dates, pd.Series):
+        datepath = dates
+        df = pd.read_csv(datepath)
+        df.columns = [k.strip() for k in df.columns]
+        inkey = datetype
+        outkey = df.columns[0]
+        df[inkey] = pd.to_datetime(df[inkey])
+        df[outkey] = pd.to_datetime(df[outkey])
+        dates = df[[inkey, outkey]].set_index(outkey)
+    links = []
+    for outdate, indate in dates.items():
+        src = indate.strftime(tmpl)
+        dst = outdate.strftime(tmpl)
+        if not os.path.exists(dst):
+            if not os.path.exists(src):
+                if verbose > 0:
+                    print(f'{src} is missing; cannot make {dst}')
+                continue
+            os.symlink(src, dst)
+            links.append(dst)
+    return links

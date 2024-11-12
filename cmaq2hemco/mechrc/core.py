@@ -53,9 +53,9 @@ def writeconfig(outpath, year, sector, filepatt, cq2gc):
                         hier=50
                     )
                 hcf.write((
-                    '0 EPA{year}_{gckey}__{sector}{cqkey} {path}  {cqkey}       '
-                    '{year}-{year}/1-12/1-31/0-24 C xyz  {unit}  {gckey}'
-                    '   {scale}     {cat} {hier}\n'
+                    '0 EPA{year}_{gckey}__{sector}{cqkey} {path}  {cqkey}'
+                    '       {year}-{year}/1-12/1-31/0-24 C xyz  {unit}'
+                    '  {gckey}   {scale}     {cat} {hier}\n'
                 ).format(year=year, **opts))
         print()
     print('Ignored', sorted(ignores))
