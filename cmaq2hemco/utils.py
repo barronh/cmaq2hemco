@@ -272,7 +272,7 @@ def open_date(
 
 
 def pt2hemco(
-    path, pf, elat, elon, ez=None, nk=11, temp_a=288.15, pres_a=101325
+    path, pf, elat, elon, ez=None, nk=11, temp_a=288.15, pres_a=101325, u=2.5
 ):
     """
     Arguments
@@ -319,6 +319,7 @@ def pt2hemco(
     clon = (elon[1:] + elon[:-1]) / 2
     ilat = np.arange(nr)
     ilon = np.arange(nc)
+    dx = pf.attrs['XCELL'] / 2
     # replace continues lat/lon with midpoint indexer
     ris = pd.cut(pf['lat'], bins=elat, labels=ilat).astype('i')
     cis = pd.cut(pf['lon'], bins=elon, labels=ilon).astype('i')
@@ -326,7 +327,8 @@ def pt2hemco(
         # cz = (ez[1:] + ez[:-1]) / 2
         iz = np.arange(nk)
         dz = plumerise_briggs(
-            pf['STKDM'], pf['STKVE'], pf['STKTK'], temp_a=temp_a, pres_a=pres_a
+            pf['STKDM'], pf['STKVE'], pf['STKTK'], temp_a=temp_a, pres_a=pres_a,
+            u=u, x=dx
         )
         z = pf['STKHT'] + dz
         z = np.minimum(np.maximum(z, ez[0]), ez[-1])
@@ -604,13 +606,13 @@ def gd2hemco(path, gf, elat, elon, matrix=None):
 
 def unitconvert(key, val, unit, area=None, inplace=True):
     outunit = []
-    factor = 1
+    factor = np.ones_like(val)
     assert '/s' in unit
     inunit = unit.replace('/s', '')
-    if unit in ('g/s',):
-        factor = factor / 1000.
+    if unit in ('g/s', 'g/s/m**2'):
+        factor /= 1000.
         outunit.append('kg')
-    elif unit in ('moles/s',):
+    elif unit in ('moles/s', 'moles/s/m**2'):
         try:
             mw = getmw(key)
             factor *= mw
@@ -622,7 +624,9 @@ def unitconvert(key, val, unit, area=None, inplace=True):
         print(f'**WARNING: {key} [{unit}] not converted to kg: {unit} unknown')
         outunit.append(inunit)
     if 'm**2' not in unit and area is not None:
-        factor = 1 / area
+        factor /= area
+        outunit.append('/m**2')
+    elif '/m**2' in unit:
         outunit.append('/m**2')
     outunit.append('/s')
     outunit = ''.join(outunit)
@@ -665,7 +669,6 @@ def pt2gd(
     import numpy as np
     import xarray as xr
     import pandas as pd
-    from .utils import plumerise_briggs
 
     ns = pf.sizes['stack']
     nt = pf.sizes['time']
