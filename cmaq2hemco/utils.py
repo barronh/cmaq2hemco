@@ -327,8 +327,8 @@ def pt2hemco(
         # cz = (ez[1:] + ez[:-1]) / 2
         iz = np.arange(nk)
         dz = plumerise_briggs(
-            pf['STKDM'], pf['STKVE'], pf['STKTK'], temp_a=temp_a, pres_a=pres_a,
-            u=u, x=dx
+            pf['STKDM'], pf['STKVE'], pf['STKTK'],
+            temp_a=temp_a, pres_a=pres_a, u=u, x=dx
         )
         z = pf['STKHT'] + dz
         z = np.minimum(np.maximum(z, ez[0]), ez[-1])

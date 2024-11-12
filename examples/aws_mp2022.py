@@ -3,7 +3,7 @@ import numpy as np
 import os
 from cmaq2hemco.mp2022 import open_gdemis, open_ptemis
 from cmaq2hemco.utils import pt2hemco, gd2hemco, gd2matrix, gd2hemco_fast
-
+from cmaq2hemco.mechrc.cb6r5_ae7_aq import writeconfig
 
 debug = True
 dates = pd.date_range('2022-01-01', '2022-12-31', freq='d')
@@ -97,3 +97,8 @@ for date in dates:
         rpf = pt2hemco(outpath, pf, elat, elon)  # apply plume rise
         del rpf, pf
 
+
+for sector in gkeys + pkeys:
+    hcpath = f'epa2022v1/{sector}/HEMCO_{sector}.rc'
+    secttmpl = f'epa2022v1/{sector}/{sector}_%Y-%m-%d_epa2022v1_hc_22m.nc'
+    writeconfig(hcpath, 2022, sector, secttmpl)
