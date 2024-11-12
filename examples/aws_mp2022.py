@@ -32,7 +32,7 @@ canada_og2D
 canada_afdust_adj
 airports
 afdust_adj""".split()
-gkeys = ['merged_nobeis_norwc']
+
 # ignoring fires to avoid duplication
 # ptagfire
 # ptfire-wild
@@ -46,9 +46,9 @@ pt_oilgas
 ptnonipm""".split()
 
 if debug:
-    dates = dates[:1]
-    pkeys = pkeys[:0]
-    gkeys = gkeys[:1]
+    dates = pd.to_datetime(['2022-07-12'])
+    # pkeys = pkeys[:1]
+    # gkeys = gkeys[:1]
     print('**WARNING: in debug mode; only processing')
     print(dates)
     print(pkeys)
