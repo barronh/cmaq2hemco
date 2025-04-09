@@ -35,23 +35,25 @@ def writeconfig(outpath, year, sector, filepatt, cq2gc):
                 defaults.add(cqkey)
                 gctrans = [[cqkey, '1007']]
             for gckey, scale in gctrans:
-                if gckey in [
-                    'ACET', 'MEK', 'ALD2', 'PRPE', 'PRPA', 'BENZ', 'TOLU',
-                    'XYLE', 'EOH', 'ALK4', 'ISOP'
-                ]:
-                    units = 'kgC/m2/s'
-                else:
-                    units = v.units.strip()
-                    opts = dict(
-                        unit=units,
-                        gckey=gckey,
-                        cqkey=cqkey,
-                        sector=sector,
-                        path=hcpatt,
-                        scale=scale,
-                        cat='1/2',
-                        hier=50
-                    )
+                # if gckey in [
+                #     'ACET', 'MEK', 'ALD2', 'PRPE', 'PRPA', 'BENZ', 'TOLU',
+                #     'XYLE', 'EOH', 'ALK4', 'ISOP'
+                # ]:
+                #     units = 'kgC/m2/s'
+                # else:
+                # All variables are being entered as kg/m2/s, which HEMCO
+                # should read correctly.
+                units = v.units.strip()
+                opts = dict(
+                    unit=units,
+                    gckey=gckey,
+                    cqkey=cqkey,
+                    sector=sector,
+                    path=hcpatt,
+                    scale=scale,
+                    cat='1/2',
+                    hier=50
+                )
                 hcf.write((
                     '0 EPA{year}_{gckey}__{sector}{cqkey} {path}  {cqkey}'
                     '       {year}-{year}/1-12/1-31/0-24 C xyz  {unit}'

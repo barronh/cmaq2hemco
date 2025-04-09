@@ -1,6 +1,7 @@
 __all__ = [
     'plumerise_briggs', 'open_date', 'gd2hemco', 'pt2hemco', 'pt2gd', 'merge',
-    'to_ioapi'
+    'to_ioapi', 'getmw', 'se_file', 'gd2matrix', 'gd2hemco_fast',
+    'unitconvert', 'hemco_area', 'symlinks'
 ]
 
 import numpy as np
@@ -272,7 +273,8 @@ def open_date(
 
 
 def pt2hemco(
-    path, pf, elat, elon, ez=None, nk=11, temp_a=288.15, pres_a=101325, u=2.5
+    path, pf, elat, elon, ez=None, nk=11, temp_a=288.15, pres_a=101325, u=2.5,
+    verbose=0
 ):
     """
     Arguments
@@ -286,13 +288,15 @@ def pt2hemco(
     elon : array
         Edge longitudes for regular grid
     ez : array
-        Edge altitudes in meeters for vertical structure
+        Edge altitudes in meters for vertical structure
     nk : int
         Number of vertical levels to use if ek not specified
     temp_a : float
         Temperature in K for temperature to use for plume rise.
     pres_a : float
         Pressure in Pa for temperature to use for plume rise.
+    verbose : int
+        Level of verbosity (0-9)
 
     Arguments
     ---------
@@ -301,6 +305,7 @@ def pt2hemco(
     """
     import numpy as np
     import pandas as pd
+    import warnings
     assert pf['lat'].min() > elat.min()
     assert pf['lat'].max() < elat.max()
     assert pf['lon'].min() > elon.min()
@@ -312,6 +317,7 @@ def pt2hemco(
     # and assuming constant T=288.15 and P=101325
     if ez is None:
         ez = _defez[:nk + 1]
+    nk = ez.size - 1
     nt = pf.sizes['time']
     nr = elat.size - 1
     nc = elon.size - 1
@@ -323,7 +329,17 @@ def pt2hemco(
     # replace continues lat/lon with midpoint indexer
     ris = pd.cut(pf['lat'], bins=elat, labels=ilat).astype('i')
     cis = pd.cut(pf['lon'], bins=elon, labels=ilon).astype('i')
-    if ez is not None and 'STKHT' in pf:
+    if 'STKHT' not in pf:
+        warnings.warn('STKHT not available; 2d output')
+        nk = 1
+    else:
+        if pf['STKHT'][:].isnull().all():
+            warnings.warn('STKHT all null (likely fire); 2d output')
+            nk = 1
+
+    if nk == 1:
+        kis = np.zeros(pf.sizes['stack'], dtype='i')
+    else:
         # cz = (ez[1:] + ez[:-1]) / 2
         iz = np.arange(nk)
         dz = plumerise_briggs(
@@ -332,10 +348,7 @@ def pt2hemco(
         )
         z = pf['STKHT'] + dz
         z = np.minimum(np.maximum(z, ez[0]), ez[-1])
-        kis = pd.cut(z, bins=ez, labels=iz).astype('i')
-    else:
-        nk = 1
-        kis = np.zeros(pf.sizes['stack'], dtype='i')
+        kis = pd.cut(z, bins=ez, labels=iz, include_lowest=True).astype('i')
 
     clev = _deflevs[:nk]
     tis = (
@@ -361,14 +374,17 @@ def pt2hemco(
     outf.addvar('AREA', area, units='m2', dims=('lat', 'lon'))
     for dk in datakeys:
         if len(pf[dk].dims) == 1:
-            print(f'skip {dk}')
+            if verbose > 1:
+                print(f'skip {dk}')
             continue
         dtot = pf[dk].sum()
         if dtot == 0:
-            print(f'excluded {dk}')
+            if verbose > 0:
+                print(f'zero {dk} emis; excluded {dk}')
             continue
         tmp[:] *= 0
-        print(dk)
+        if verbose > 0:
+            print(dk)
         df = pf[['ti', 'ki', 'ri', 'ci', dk]].to_dataframe()
         df = df.loc[df[dk] != 0]
         vals = df.groupby(['ti', 'ki', 'ri', 'ci'], as_index=False).sum()
@@ -435,7 +451,7 @@ def gd2matrix(gf, elat, elon):
     return ol.set_index(['ROW', 'COL', 'lati', 'loni'])
 
 
-def gd2hemco_fast(path, gf, elat, elon):
+def gd2hemco_fast(path, gf, elat, elon, verbose=0):
     """
     Bilinear interpolation of fluxes (w/ MSFX2 factor)
 
@@ -449,6 +465,8 @@ def gd2hemco_fast(path, gf, elat, elon):
         Edge latitudes for regular grid
     elon : array
         Edge longitudes for regular grid
+    verbose : int
+        Level of verbosity
 
     Arguments
     ---------
@@ -480,9 +498,11 @@ def gd2hemco_fast(path, gf, elat, elon):
     for dk in datakeys:
         dtot = gf[dk].sum()
         if dtot == 0:
-            print(f'excluded {dk}')
+            if verbose > 0:
+                print(f'excluded {dk}')
             continue
-        print(dk)
+        if verbose > 0:
+            print(dk)
         tmp = (gf[dk] / qarea).interp(ROW=Y, COL=X)
         attrs = {k: v for k, v in gf[dk].attrs.items()}
         unit = attrs['units'].strip() + '/m**2'
@@ -493,7 +513,7 @@ def gd2hemco_fast(path, gf, elat, elon):
     return outf
 
 
-def gd2hemco(path, gf, elat, elon, matrix=None):
+def gd2hemco(path, gf, elat, elon, matrix=None, verbose=0):
     """
     Uses a fractional aera overlap interoplation.
 
@@ -509,6 +529,8 @@ def gd2hemco(path, gf, elat, elon, matrix=None):
         Edge longitudes for regular grid
     matrix : pandas.DataFrame
         fraction from row/col centroids to lat/lon centroids
+    verbose : int
+        Level of verbosity
 
     Arguments
     ---------
@@ -573,10 +595,12 @@ def gd2hemco(path, gf, elat, elon, matrix=None):
     merged = None
     for dk in datakeys:
         if len(gf[dk].dims) == 1:
-            print(f'skip {dk}')
+            if verbose > 1:
+                print(f'skip {dk}')
             continue
         tmp[:] *= 0
-        print(dk)
+        if verbose > 0:
+            print(dk)
         df = gf[['ti', 'ki', dk]].to_dataframe()
         gvals = df.groupby(['ti', 'ki', 'ROW', 'COL'], as_index=True).sum()
         if merged is None:
@@ -605,6 +629,7 @@ def gd2hemco(path, gf, elat, elon, matrix=None):
 
 
 def unitconvert(key, val, unit, area=None, inplace=True):
+    unit = unit.strip()
     outunit = []
     factor = np.ones_like(val)
     assert '/s' in unit

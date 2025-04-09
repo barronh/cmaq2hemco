@@ -7,14 +7,14 @@ inputs.
 
 .. code-block:: bash
 
-   python -m pip install --user cmaq2hemco pyrsig pycno pyproj netcdf4
+   python -m pip install --user git+https://barronh.github.com/cmaq2hemco.git pyrsig pycno pyproj netcdf4 boto3
 
 In notebooks (e.g., on Google Colab), this can be done live with
 the command below (may require kernel restart):
 
 .. code-block:: python
 
-   %pip install --user pyrsig pycno pyproj netcdf4
+   %pip install --user git+https://barronh.github.com/cmaq2hemco.git pyrsig pycno pyproj netcdf4 boto3
 
 To run an example in a notebook:
 
