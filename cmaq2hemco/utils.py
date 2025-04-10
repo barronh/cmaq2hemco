@@ -1,13 +1,15 @@
 __all__ = [
     'plumerise_briggs', 'open_date', 'gd2hemco', 'pt2hemco', 'pt2gd', 'merge',
     'to_ioapi', 'getmw', 'se_file', 'gd2matrix', 'gd2hemco_fast',
-    'unitconvert', 'hemco_area', 'symlinks'
+    'unitconvert', 'hemco_area', 'symlinks', 'gd_file'
 ]
 
 import numpy as np
 import xarray as xr
 xr.set_options(keep_attrs=True)
 
+# https://wiki.seas.harvard.edu/geos-chem/index.php/GEOS-Chem_vertical_grids
+# default vertical edge levels in meters above ground level.
 _defez = np.array([
     -6.00, 123.0, 254.0, 387.0, 521.0, 657.0, 795.0, 934.0, 1075., 1218.,
     1363., 1510., 1659., 1860., 2118., 2382., 2654., 2932., 3219., 3665.,
@@ -18,6 +20,7 @@ _defez = np.array([
     51788, 53773, 55794, 57846, 59924, 62021, 64129, 66245, 68392, 70657,
     73180, 76357, 80581
 ], dtype='f')
+# default vertical mid points in s = (p - ptop) / (p - p0) eta levels
 _deflevs = np.array([
     0.99250002413, 0.97749990013, 0.962499776, 0.947499955, 0.93250006,
     0.91749991, 0.90249991, 0.88749996, 0.87249996, 0.85750006, 0.842500125,
@@ -66,6 +69,25 @@ _timeattrs = dict(
 
 
 def getmw(key, gc='cb6r5_ae7_aq', nr='cb6r5hap_ae7_aq'):
+    """
+    Get the molecular weight (kg/mol) for a chemical mechanism species. The
+    species may be an explicit or lumped species, so weights are mechanism
+    specific.
+
+    Arguments
+    ---------
+    key : str
+        Species key in mechanism
+    gc : str
+        Name of gas-phase chemical mechanism
+    nr : str
+        Name of non-reactive gas-phase mechanism (typically haps)
+
+    Returns
+    -------
+    mw : float
+        Molecular weight of species in kg/mol
+    """
     import requests
     import os
     import io
@@ -168,8 +190,6 @@ def plumerise_briggs(
     ----------
     [1] Seinfeld, J. H. and Pandis, S. N.: Atmospheric chemistry and physics:
     from air pollution to climate change, 2nd ed., J. Wiley, Hoboken, N.J, 2006
-
-
     """
     import numpy as np
     g = 9.80665  # scipy.constants.g
@@ -277,6 +297,8 @@ def pt2hemco(
     verbose=0
 ):
     """
+    Convert a point source file to a hemco-ready file
+
     Arguments
     ---------
     path : str
@@ -399,6 +421,25 @@ def pt2hemco(
 
 
 def gd2matrix(gf, elat, elon):
+    """
+    Create a pixel to pixel fractional mapping matrix.
+
+    Arguments
+    ---------
+    gf : xarray.Dataset
+        xarray dataset supported by cmaqsatproc presenting the csp.geodf
+        interface.
+    elat : array
+        Edges of grid latitudes in degrees_north
+    elon : array
+        Edges of grid longitudes in degrees_east
+
+    Returns
+    -------
+    gdf : pandas.DataFrame
+        Mapping from ROW/COL to lon/lat cells with fraction of mass per
+        ROW/COL assigned to lon/lat.
+    """
     from shapely.geometry import box
     import geopandas as gpd
     import warnings
@@ -629,15 +670,44 @@ def gd2hemco(path, gf, elat, elon, matrix=None, verbose=0):
 
 
 def unitconvert(key, val, unit, area=None, inplace=True):
+    """
+    Arguments
+    ---------
+    key : str
+        Name of species to get molecular weight.
+    val : array-like
+        Values in units (unit) to be converted if unit is known..
+    unit : str
+        Input unit where beginning and ending spaces will be removed. Input
+        units that are known are:
+        g/s, g/s/m**2, g/m**2/s, or
+        moles/s, moles/s/m**2, moles/m**2/s
+        convertible to kg/m**2/s
+    area : array-like
+        Area for each pixel of the val array
+    inplace : bool
+        If True, do the unit conversion within the val array without allocating
+        additional memory
+
+    Returns
+    -------
+    outval, outunit : tuple
+        outval has been converted (if possible) to kg/m2/s
+        outunit is the final unit (kg/m2/s if possible)
+    """
     unit = unit.strip()
     outunit = []
     factor = np.ones_like(val)
     assert '/s' in unit
     inunit = unit.replace('/s', '')
-    if unit in ('g/s', 'g/s/m**2'):
+    gps = ('g/s', 'g/s/m**2', 'g/m**2/s', 'g/m2/s', 'g/s/m2')
+    nps = (
+        'moles/s', 'moles/s/m**2', 'moles/m**2/s', 'moles/s/m2', 'moles/m2/s'
+    )
+    if unit in gps:
         factor /= 1000.
         outunit.append('kg')
-    elif unit in ('moles/s', 'moles/s/m**2'):
+    elif unit in nps:
         try:
             mw = getmw(key)
             factor *= mw
@@ -665,6 +735,21 @@ def unitconvert(key, val, unit, area=None, inplace=True):
 
 
 def merge(fs, bf=None):
+    """
+    Combine many files into a single file with the mass from all and the
+    vertical structure of the tallest file.
+
+    Arguments
+    ---------
+    fs : list
+        List of file objects to merge
+    bf : xarray.Dataset
+        Use this file as the basis for the coordiantes.
+
+    Returns
+    -------
+    mf : xarray.Dataset
+    """
     import copy
     if bf is None:
         bf = sorted([
@@ -690,6 +775,34 @@ def pt2gd(
 ):
     """
     Convert point file (from se_file) to a CMAQ gridded emission file.
+
+    Arguments
+    ---------
+    pf : xarray.Dataset
+        Must have time and stack dimensiosn with stack parameters from stack
+        group and emissions.
+    nr : int
+        Number of rows (assuming YORIG and YCELL are accurate)
+    nc : int
+        Number of cols (assuming XORIG and XCELL are accurate)
+    ez : array-like
+        Edges of the vertical array being created allocated to
+    vgtyp : int
+        Vertical grid type using the IOAPI parameters
+    vgtop : float
+        Top of the vertical grid in Pascals
+    vglvls : array-like
+        Edges of the vertical grid in the terrain following pressure system.
+        vglvls_z = (p_z - vgtop) / (p - psfc)
+    byvar : bool
+        Perform calculations by variable to reduce overall memmory load.
+
+    Returns
+    -------
+    gf : xarray.Dataset
+        Gridded file representing the mass from the point source file, but on
+        a regular projected grid with vertical layers assigned using Briggs
+        plumerise calculations.
     """
     import numpy as np
     import xarray as xr
@@ -826,6 +939,26 @@ class hemcofile:
     def __init__(
         self, path, time, lat, lon, lev=None, varkeys=None, attrs=None
     ):
+        """
+        Arguments
+        ---------
+        path : str
+            path of the input file to be created.
+        time : array
+            Times of the output file in UTC
+        lat : array
+            Latitudes for midpoints of grid in the destination file in
+            degrees_north
+        lon : array
+            Longitudes for midpoints of grid in the destination file in
+            degrees_east
+        lev : array
+            Vertical layers for the destination file
+        varkeys : list
+            List of keys to write from the file
+        attrs : mappable
+            Attributes for the output file.
+        """
         import pandas as pd
         import netCDF4
         if varkeys is None:
@@ -870,6 +1003,19 @@ class hemcofile:
     def defvar(self, vk, dims=None, **attrs):
         """
         Define a variable using HEMCO expectations
+
+        Arguments
+        ---------
+        vk : str
+            Name of the output variable
+        dims : tuple
+            Named dimensions of the output variable
+        attrs : mappable
+            Variable attributes
+
+        Results
+        -------
+        None
         """
         ncf = self.nc
         nr = len(ncf.dimensions['lat'])
@@ -892,6 +1038,15 @@ class hemcofile:
     def setattrs(self, **attrs):
         """
         Add attributes to file
+
+        Arguments
+        ---------
+        attrs : mappable
+            Attributes to add to file
+
+        Results
+        -------
+        None
         """
         for k, v in attrs.items():
             self.nc.setncattr(k, v)
@@ -899,6 +1054,21 @@ class hemcofile:
     def addvar(self, key, vals, dims=None, **attrs):
         """
         Add a variable (defining if necessary using HEMCO expectations)
+
+        Arguments
+        ---------
+        key : str
+            Name of variable
+        vals : array
+            Values to add to the variable
+        dims : tuple
+            Named dimensions
+        attrs : mappable
+            Attributes to add to variable
+
+        Results
+        -------
+        None
         """
         nc = self.nc
         if key not in nc.variables:
@@ -918,6 +1088,21 @@ class hemcofile:
 
 
 def to_ioapi(ef, path, **wopts):
+    """
+    Arguments
+    ---------
+    ef : xarray.Dataset
+        Emission file with stime dimension to allow construcing the TFLAG
+        variable.
+    path : str
+        Path for output file written as an IOAPI file.
+    wopts : mappable
+        Write options for xarray.to_netcdf command.
+
+    Returns
+    -------
+    None
+    """
     import xarray as xr
     import numpy as np
     import pandas as pd
@@ -1000,3 +1185,33 @@ def symlinks(tmpl, dates, datetype=None, verbose=0):
             os.symlink(src, dst)
             links.append(dst)
     return links
+
+
+def gd_file(ef):
+    """
+    Add lon/lat and rename TSTEP as time.
+
+    Arguments
+    ---------
+    ef : xarray.Dataset
+        ef must have the crs attribute and TSTEP coordinate variable
+
+    Returns
+    -------
+    gf : xarray.Dataset
+        Same as ef, but has additional variables lon, lat, and time. TFLAG is
+        removed.
+    """
+    import pyproj
+    ef = ef.isel(
+        LAY=0, drop=True
+    ).rename(TSTEP='time')
+    proj = pyproj.Proj(ef.crs)
+    Y, X = xr.broadcast(ef.ROW, ef.COL)
+    LON, LAT = proj(X, Y, inverse=True)
+    attrs = dict(units='degrees_east', long_name='longitude')
+    ef['lon'] = ('ROW', 'COL'), LON, attrs
+    attrs = dict(units='degrees_north', long_name='latitude')
+    ef['lat'] = ('ROW', 'COL'), LAT, attrs
+    del ef['TFLAG']
+    return ef
